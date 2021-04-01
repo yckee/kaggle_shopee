@@ -1,0 +1,6 @@
+.ipynb_checkpoints
+.vscode
+.git
+.code-workspace
+
+data/
