@@ -3,4 +3,6 @@
 .git
 .code-workspace
 
+*.pkl
+
 data/
