@@ -12,5 +12,10 @@
 | EfficientNet-b7         | 0.5255          |                        |
 | EfficientNet-b0         | 0.6671          |                        |
 | EfficientNet-b0 + KNN   | 0.6675          |                        |
+| TFIDF                   | 0.6665          |                        |
+| TFIDF + PCA(5000)       | 0.6283          |                        |
 | EfficientNet-b0 + TFIDF | 0.7315          |                        |
+| EffNetb0_KNN + TFIDF_PCA| 0.7244          |                        |
+
+
 

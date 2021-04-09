@@ -4,5 +4,6 @@
 .code-workspace
 
 *.pkl
+*.ptn
 
 data/
