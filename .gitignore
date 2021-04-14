@@ -2,8 +2,10 @@
 .vscode
 .git
 .code-workspace
+__pycache__/
 
 *.pkl
 *.ptn
 
 data/
+checkpoints/
