@@ -23,17 +23,17 @@ from sklearn.preprocessing import LabelEncoder
 IMG_SIZE = 512
 N_WORKERS = 4
 BATCH_SIZE = 8
-EPOCHS = 30
-INIT_LR = 3e-4
+EPOCHS = 10
+INIT_LR = 5e-4
 MIN_LR = 1e-6
 SEED = 24
-FOLD_ID = 4
+FOLD_ID = 3
 
 MODEL_PARAMS = {
-    'feature_space' : 512, 
+    'feature_space' : 680, 
     'out_features' : 11014, 
-    'scale' : 64, 
-    'margin' : 0.5
+    'scale' : 24.0, 
+    'margin' : 0.4
 }
 
 
@@ -109,14 +109,17 @@ def main():
 
     #---------------------------------------------Train---------------------------------------------
     best_loss = 100_000
+    best_epoch = -1
     for epoch in range(EPOCHS):
         loss_train = train(loader_train, model, criterion, optimizer, scheduler, epoch)
         loss_valid = eval(loader_valid, model, criterion, epoch)
 
         if loss_valid < best_loss:
             best_loss = loss_valid
-            torch.save(model.state_dict(), f"checkpoints/arcface_epoch{epoch}.pth")
+            best_epoch = epoch
+        torch.save(model.state_dict(), f"checkpoints/arcface_epoch{epoch}.pth")
 
+    print(f"Best val  score: {best_loss} epoch: {best_epoch}")
 
 def train(loader, model, criterion, optimizer, sheduler, epoch):
     model.train()
