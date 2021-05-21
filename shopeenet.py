@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
  
+import timm
+import transformers
 from efficientnet_pytorch import EfficientNet
 
 
@@ -41,15 +43,23 @@ class ArcFace(nn.Module):
         
 
 class ShopeeNet(nn.Module):
-    def __init__(self, feature_space, out_features, scale, margin):
+    def __init__(self, model_name, feature_space, out_features, scale, margin):
         super(ShopeeNet, self).__init__()
         self.feature_space = feature_space
         self.out_features = out_features
         
-        self.backbone = EfficientNet.from_pretrained('efficientnet-b0')
-        in_features = self.backbone._conv_head.out_channels
-        self.dropout = nn.Dropout(p=self.backbone._global_params.dropout_rate)
-        self.classifier = nn.Linear(in_features, self.feature_space)
+        if 'efficientnet' in model_name:
+            self.backbone = EfficientNet.from_pretrained(model_name)
+            self.in_features = self.backbone._conv_head.out_channels
+            self.timm = False
+        
+        elif 'nfnet' in model_name:
+            self.backbone = timm.create_model(model_name, pretrained=True, num_classes=0)
+            self.in_features = self.backbone.final_conv.out_channels
+            self.timm = True
+        
+        self.dropout = nn.Dropout(p=0.2)
+        self.classifier = nn.Linear(self.in_features, self.feature_space)
         self.bn = nn.BatchNorm1d(self.feature_space)
         
         self.margin = ArcFace(
@@ -71,16 +81,156 @@ class ShopeeNet(nn.Module):
 
 
     def forward(self, img, label=None):
-        batch_size = img.shape[0]
-        out = self.backbone.extract_features(img)
-        out = self.backbone._avg_pooling(out).view(batch_size, -1)
-        out = self.dropout(out)
-        out = self.classifier(out)
-        out = self.bn(out) 
+        features = self.extract_features(img)
         
         if self.training:
-            logits = self.margin(out, label)
+            logits = self.margin(features, label)
             return logits
         else:
-            logits = self.margin(out)
+            logits = self.margin(features)
             return logits
+
+    def extract_features(self, x):    
+        batch_size = x.shape[0]
+
+        if self.timm:
+            x = self.backbone(x).view(batch_size, -1)
+
+        else:
+            x = self.backbone.extract_features(x)
+            x = self.backbone._avg_pooling(x).view(batch_size, -1)
+
+        x = self.dropout(x)
+        x = self.classifier(x)
+        x = self.bn(x) 
+        
+        return x
+
+
+
+class ShopeeBert(nn.Module):
+
+    def __init__(self, model_name, feature_space, out_features, scale, margin):
+        super(ShopeeBert, self).__init__()
+        self.feature_space = feature_space
+        self.out_features = out_features
+
+        self.transformer = transformers.AutoModel.from_pretrained(model_name)
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
+        self.in_features = self.transformer.config.hidden_size
+        
+        
+        self.dropout = nn.Dropout(p=0.2)
+        self.classifier = nn.Linear(self.in_features, self.feature_space)
+        self.bn = nn.BatchNorm1d(self.feature_space)
+        
+        self.margin = ArcFace(
+            in_features = self.feature_space,
+            out_features = self.out_features,
+            scale = scale, 
+            margin = margin       
+        )
+        
+        if self.training:
+            self._init_params()
+
+    def _init_params(self):
+        nn.init.xavier_normal_(self.classifier.weight)
+        nn.init.constant_(self.classifier.bias, 0)
+        nn.init.constant_(self.bn.weight, 1)
+        nn.init.constant_(self.bn.bias, 0)
+
+
+    def forward(self, input_ids, attention_mask, label=None):
+        features = self.extract_text_feat(input_ids, attention_mask)
+
+        if self.training:
+            logits = self.margin(features, label)
+            return logits
+        else:
+            logits = self.margin(features)
+            return logits
+    
+    
+    def extract_text_feat(self, input_ids, attention_mask):
+        # inputs = self.tokenizer(text, max_length=128, padding='max_length', truncation=True,  return_tensors='pt')
+        x = self.transformer(input_ids, attention_mask)
+
+        features = x[0]
+        features = features[:, 0, :]
+
+        features = self.dropout(features)
+        features = self.classifier(features)
+        features = self.bn(features) 
+        
+        return features        
+
+
+class ShopeeCombined(nn.Module):
+
+    def __init__(self, cnn_name, bert_name,  feature_space, out_features, scale, margin):
+        super(ShopeeCombined, self).__init__()
+        self.feature_space = feature_space
+        self.out_features = out_features
+
+        
+        self.backbone = timm.create_model(cnn_name, pretrained=True, num_classes=0)
+        
+        self.transformer = transformers.AutoModel.from_pretrained(bert_name)
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(bert_name)
+        
+        self.in_features = self.transformer.config.hidden_size + self.backbone.final_conv.out_channels
+
+        
+        
+        self.dropout = nn.Dropout(p=0.3)
+        self.classifier = nn.Linear(self.in_features, self.feature_space)
+        self.bn = nn.BatchNorm1d(self.feature_space)
+        
+        self.margin = ArcFace(
+            in_features = self.feature_space,
+            out_features = self.out_features,
+            scale = scale, 
+            margin = margin       
+        )
+        
+        if self.training:
+            self._init_params()
+
+        self.saving_name = f"{bert_name.split('-')[0]}_{cnn_name.split('_')[-1]}_fc{feature_space}_s{scale}_m{str(margin).replace(',', '')}"
+
+
+    def _init_params(self):
+        nn.init.xavier_normal_(self.classifier.weight)
+        nn.init.constant_(self.classifier.bias, 0)
+        nn.init.constant_(self.bn.weight, 1)
+        nn.init.constant_(self.bn.bias, 0)
+
+
+    def forward(self, img, input_ids, attention_mask, label=None):
+        features = self.extract_features(img, input_ids, attention_mask)
+
+        if self.training:
+            logits = self.margin(features, label)
+            return logits
+        else:
+            logits = self.margin(features)
+            return logits
+
+
+    def extract_features(self, img, input_ids, attention_mask): 
+        batch_size = img.shape[0]
+
+        img_feat = self.backbone(img).view(batch_size, -1)
+        
+        text_feat = self.transformer(input_ids, attention_mask)
+        text_feat = text_feat[0]
+        text_feat = text_feat[:, 0, :]
+
+        feat = torch.cat([img_feat, text_feat], dim=1)
+
+        feat = self.dropout(feat)
+        feat = self.classifier(feat)
+        feat = self.bn(feat) 
+        
+        return feat
